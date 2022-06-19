@@ -188,6 +188,15 @@ func (c *DefaultCommandRunner) commentUserDoesNotHavePermissions(baseRepo models
 	}
 }
 
+// commentRepoDirNotFromThisPR comments on the pull request that the user
+// is not allowed to execute the command.
+func (c *DefaultCommandRunner) commentRepoDirNotFromThisPR(baseRepo models.Repo, pullNum int, cmd *CommentCommand) {
+	errMsg := fmt.Sprintf("```\nError: The dir %s does not belong to this pull request.\n```", cmd.RepoRelDir)
+	if err := c.VCSClient.CreateComment(baseRepo, pullNum, errMsg, ""); err != nil {
+		c.Logger.Err("unable to comment on pull request: %s", err)
+	}
+}
+
 // checkUserPermissions checks if the user has permissions to execute the command
 func (c *DefaultCommandRunner) checkUserPermissions(repo models.Repo, user models.User, cmd *CommentCommand) (bool, error) {
 	if c.TeamAllowlistChecker == nil || !c.TeamAllowlistChecker.HasRules() {
@@ -211,6 +220,7 @@ func (c *DefaultCommandRunner) checkUserPermissions(repo models.Repo, user model
 // the event is further validated before making an additional (potentially
 // wasteful) call to get the necessary data.
 func (c *DefaultCommandRunner) RunCommentCommand(baseRepo models.Repo, maybeHeadRepo *models.Repo, maybePull *models.PullRequest, user models.User, pullNum int, cmd *CommentCommand) {
+	var invalidRepoDir bool
 	if opStarted := c.Drainer.StartOp(); !opStarted {
 		if commentErr := c.VCSClient.CreateComment(baseRepo, pullNum, ShutdownComment, ""); commentErr != nil {
 			c.Logger.Log(logging.Error, "unable to comment that Atlantis is shutting down: %s", commentErr)
@@ -250,6 +260,19 @@ func (c *DefaultCommandRunner) RunCommentCommand(baseRepo models.Repo, maybeHead
 
 	if err != nil {
 		log.Err("Unable to fetch pull status, this is likely a bug.", err)
+	}
+
+	// Check if the dir used in the comment command is valid for the current project
+	for _, s := range status.Projects {
+		if cmd.RepoRelDir == s.RepoRelDir {
+			invalidRepoDir = true
+		}
+	}
+	
+	// Block the plan if a dir non-relate with the pull request was used
+	if !invalidRepoDir {
+		c.commentRepoDirNotFromThisPR(baseRepo, pullNum, cmd)
+		return
 	}
 
 	ctx := &command.Context{
