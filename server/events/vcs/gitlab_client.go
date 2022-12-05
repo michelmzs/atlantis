@@ -259,24 +259,24 @@ func (g *GitlabClient) GetMergeRequest(repoFullName string, pullNum int) (*gitla
 	return mr, err
 }
 
-func (g *GitlabClient) WaitForSuccessPipeline(ctx context.Context, pull models.PullRequest) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+func (g *GitlabClient) WaitForSuccessPipeline(ctx context.Context, pull models.PullRequest) error {
+	// Set a timeout for the entire function.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-
-	for wait := true; wait; {
+	for {
 		select {
-		case <-ctx.Done():
-			// validation check time out
-			cancel()
-			return //ctx.Err()
-
+		case <-timeoutCtx.Done():
+			return timeoutCtx.Err()
 		default:
-			mr, _ := g.GetMergeRequest(pull.BaseRepo.FullName, pull.Num)
+			mr, err := g.GetMergeRequest(pull.BaseRepo.FullName, pull.Num)
+			if err != nil {
+				return err
+			}
 			// check if pipeline has a success state to merge
 			if mr.HeadPipeline.Status == "success" {
-				return
+				return nil
 			}
-			time.Sleep(time.Second)
+			time.Sleep(5*time.Second)
 		}
 	}
 }
